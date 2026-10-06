@@ -11,7 +11,8 @@
     "check": "tsc -b && node scripts/generate-tokens.mjs --check && node scripts/generate-brand.mjs --check",
     "tauri": "tauri",
     "desktop": "tauri dev",
-    "package": "tauri build --bundles nsis"
+    "package": "tauri build --bundles nsis",
+    "package:store": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-store.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

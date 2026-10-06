@@ -73,6 +73,16 @@ scripts/                   启动与资源生成脚本
 
 官网采用独立静态页面，源码位于 `website/dist`，下载链接指向 GitHub Releases。运行 `pnpm site` 可在 `http://127.0.0.1:4180/` 预览。维护说明见 [官网 README](website/README.md)。
 
+## Microsoft Store 上架准备
+
+计划采用 Windows 桌面 x64、USD 0.99 一次性购买。当前已准备中文上架文案、审核说明、商店图标、隐私政策与 MSIX 打包脚本；尚未注册商店账号或提交审核。材料和剩余验收见 [商店上架准备](store/README.md)。
+
+```powershell
+pnpm package:store
+```
+
+默认输出使用本地开发身份的未签名 MSIX，不能直接用于商店提交；注册账号后须使用 Partner Center 的实际产品身份重新打包。官网隐私政策：[查看政策](https://swoosh-laimiu.laimiu-new.chatgpt.site/privacy.html)。
+
 ## 维护设计令牌
 
 需要 Node.js 运行以下命令，无需安装 npm 依赖。

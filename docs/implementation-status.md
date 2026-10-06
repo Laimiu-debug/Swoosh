@@ -31,6 +31,12 @@
 
 开发时可运行 `cargo run -p swoosh-core --example loopback_receiver -- .local/loopback-receiver`，用真实 TLS 接收端检查桌面发送流程。这个测试实例只绑定 `127.0.0.1`，会自动批准测试请求，10 分钟后退出，不包含在应用或安装包中。应用的正常局域网接收始终需要两端确认。
 
+## Microsoft Store 准备
+
+已加入 Windows SDK MakeAppx 打包流程，使用 Tauri release EXE 生成未签名 MSIX；本次清单 schema 验证、资源打包和解包后 EXE SHA-256 对比通过。已生成本地开发身份 `Swoosh.LocalPreview` 的 1.0.0.0 包，当前应用版本仍为 0.1.0，不能将开发身份包提交商店。
+
+已准备中文商店文案、300px 列表图标及包内多尺度图标、审核流程与权限说明，并补充官网隐私政策。用户尚未注册开发者账号，待实名、产品名称预留及实际包身份。正式收费前还需 MSIX 安装/升级/卸载、干净机器 WebView2、Windows App Certification Kit 与真实双机验收。本次桌面操作被用户通过 Esc 停止，未继续 UI 操作或生成实拍截图，官网示意图不会作为商店截图使用。完整材料见 `store/README.md`。
+
 ## 尚未交付
 
 Android 与 iOS、二维码、可信设备存储、自动接收、接收目录设置、重试队列、速度与剩余时间估算、断点续传、后台服务、系统分享与右键菜单。当前协议为 Swoosh 自有协议，不声明 LocalSend 兼容。默认最多同时处理 4 个发送会话和 4 个接收会话。
