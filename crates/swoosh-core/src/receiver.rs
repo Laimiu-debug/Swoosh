@@ -1,7 +1,10 @@
 use crate::{
     identity,
-    model::{ContentKind, OfferReply, SessionStatus, SignedOffer, Transfer},
-    Core, Incoming,
+    model::{
+        ContentKind, Direction, Entry, OfferReply, SessionState, SessionStatus, SignedOffer,
+        Transfer, TransferStatus, MAX_ACTIVE_TRANSFERS,
+    },
+    Core, Incoming, Outcome,
 };
 use anyhow::{bail, Context, Result};
 use axum::{
@@ -16,6 +19,7 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -24,11 +28,19 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 struct ApiError(StatusCode, String);
+
+impl ApiError {
+    fn new(status: StatusCode, message: &str) -> Self {
+        Self(status, message.into())
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, self.1).into_response()
     }
 }
+
 impl From<anyhow::Error> for ApiError {
     fn from(error: anyhow::Error) -> Self {
         Self(StatusCode::BAD_REQUEST, error.to_string())
@@ -64,18 +76,18 @@ async fn offer(
     identity::verify_offer(&offer, &core.device().fingerprint)?;
     crate::validate_manifest(&offer.manifest)?;
     if offer.manifest.sender.id == core.device().id {
-        return Err(ApiError(StatusCode::BAD_REQUEST, "不能向自己发送".into()));
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "不能向自己发送"));
     }
     let mut sessions = core.incoming.lock().await;
     if sessions
         .values()
-        .filter(|session| !session.cancelled.is_cancelled() && !session.finished)
+        .filter(|session| session.is_open())
         .count()
-        >= 4
+        >= MAX_ACTIVE_TRANSFERS
     {
-        return Err(ApiError(
+        return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
-            "接收队列已满，请稍后重试".into(),
+            "接收队列已满，请稍后重试",
         ));
     }
     let mut nonces = core.nonces.lock().await;
@@ -84,10 +96,7 @@ async fn offer(
             .insert(offer.manifest.nonce.clone(), Instant::now())
             .is_some()
     {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "重复或过期的发送请求".into(),
-        ));
+        return Err(ApiError::new(StatusCode::CONFLICT, "重复或过期的发送请求"));
     }
     drop(nonces);
     let id = Uuid::new_v4().to_string();
@@ -97,11 +106,11 @@ async fn offer(
     let receive_dir = core.receive_dir();
     core.add_task(Transfer {
         id: id.clone(),
-        direction: "receive".into(),
+        direction: Direction::Receive,
         peer_name: offer.manifest.sender.name.clone(),
         title: offer.manifest.title.clone(),
         kind: offer.manifest.kind.clone(),
-        status: "awaiting_confirmation".into(),
+        status: TransferStatus::AwaitingConfirmation,
         code: code.clone(),
         total_bytes: offer.manifest.total_bytes(),
         transferred_bytes: 0,
@@ -138,7 +147,7 @@ fn authorize(session: &Incoming, headers: &HeaderMap) -> Result<(), ApiError> {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
     if token != Some(session.token.as_str()) {
-        return Err(ApiError(StatusCode::UNAUTHORIZED, "会话授权无效".into()));
+        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "会话授权无效"));
     }
     Ok(())
 }
@@ -152,17 +161,15 @@ async fn status(
     let session = sessions.get(&id).context("会话已过期")?;
     authorize(session, &headers)?;
     let status = if session.cancelled.is_cancelled() {
-        "cancelled"
+        SessionState::Cancelled
     } else if session.finished {
-        "completed"
+        SessionState::Completed
     } else if session.approved && session.sender_confirmed {
-        "ready"
+        SessionState::Ready
     } else {
-        "waiting"
+        SessionState::Waiting
     };
-    Ok(Json(SessionStatus {
-        status: status.into(),
-    }))
+    Ok(Json(SessionStatus { status }))
 }
 
 async fn confirm(
@@ -173,11 +180,8 @@ async fn confirm(
     let mut sessions = core.incoming.lock().await;
     let session = sessions.get_mut(&id).context("会话已过期")?;
     authorize(session, &headers)?;
-    if session.cancelled.is_cancelled()
-        || session.finished
-        || session.created.elapsed() >= Duration::from_secs(60)
-    {
-        return Err(ApiError(StatusCode::CONFLICT, "会话已结束".into()));
+    if !session.is_open() || !session.confirm_window_open() {
+        return Err(ApiError::new(StatusCode::CONFLICT, "会话已结束"));
     }
     session.sender_confirmed = true;
     session.last_activity = Instant::now();
@@ -211,14 +215,10 @@ async fn upload(
         let mut sessions = core.incoming.lock().await;
         let session = sessions.get_mut(&id).context("会话已过期")?;
         authorize(session, &headers)?;
-        if !session.approved
-            || !session.sender_confirmed
-            || session.cancelled.is_cancelled()
-            || session.finished
-        {
-            return Err(ApiError(
+        if !session.approved || !session.sender_confirmed || !session.is_open() {
+            return Err(ApiError::new(
                 StatusCode::FORBIDDEN,
-                "双方尚未确认或传输已结束".into(),
+                "双方尚未确认或传输已结束",
             ));
         }
         let entry = session
@@ -229,83 +229,47 @@ async fn upload(
             .clone();
         if entry.directory || session.completed.contains(&index) || session.active.contains(&index)
         {
-            return Err(ApiError(StatusCode::CONFLICT, "文件已处理".into()));
+            return Err(ApiError::new(StatusCode::CONFLICT, "文件已处理"));
         }
         if !session.active.is_empty() {
-            return Err(ApiError(StatusCode::CONFLICT, "请顺序传输文件".into()));
+            return Err(ApiError::new(StatusCode::CONFLICT, "请顺序传输文件"));
         }
         let length = headers
             .get("content-length")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok());
         if length != Some(entry.size) {
-            return Err(ApiError(StatusCode::BAD_REQUEST, "文件大小不匹配".into()));
+            return Err(ApiError::new(StatusCode::BAD_REQUEST, "文件大小不匹配"));
         }
         session.active.insert(index);
         session.last_activity = Instant::now();
+        let path = session.staging.join(&entry.path);
         (
-            entry.clone(),
-            session.staging.join(&entry.path),
+            entry,
+            path,
             session.manifest.kind.clone(),
             session.cancelled.clone(),
         )
     };
-    core.update_task(&id, |task| task.status = "transferring".into())
-        .await;
-    let result: Result<Option<String>> = async {
-        let mut file = if matches!(kind, ContentKind::Files) {
-            Some(tokio::fs::OpenOptions::new().write(true).create_new(true).open(&path).await?)
-        } else { None };
-        let mut text = Vec::new();
-        let mut hash = Sha256::new();
-        let mut received = 0u64;
-        let mut stream = body.into_data_stream();
-        let mut last_progress = Instant::now();
-        loop {
-            let chunk = tokio::select! {
-                _ = cancelled.cancelled() => bail!("传输已取消"),
-                chunk = tokio::time::timeout(Duration::from_secs(60), stream.next()) => chunk.context("传输超时")?,
-            };
-            let Some(chunk) = chunk else { break; };
-            let chunk = chunk?;
-            received = received.checked_add(chunk.len() as u64).context("文件大小溢出")?;
-            if received > entry.size { bail!("收到的数据超过清单大小"); }
-            hash.update(&chunk);
-            if let Some(file) = &mut file { file.write_all(&chunk).await?; } else { text.extend_from_slice(&chunk); }
-            if last_progress.elapsed() >= Duration::from_millis(100) {
-                let increment = received;
-                let completed_bytes = {
-                    let mut sessions = core.incoming.lock().await;
-                    let session = sessions.get_mut(&id).context("会话已过期")?;
-                    session.last_activity = Instant::now();
-                    session.completed.iter().map(|i| session.manifest.entries[*i].size).sum::<u64>()
-                };
-                core.update_task(&id, |task| task.transferred_bytes = completed_bytes + increment).await;
-                last_progress = Instant::now();
-            }
-        }
-        if received != entry.size || hex::encode(hash.finalize()) != entry.sha256 { bail!("文件校验失败，请重新发送"); }
-        if let Some(file) = &mut file { file.flush().await?; file.sync_all().await?; }
-        if matches!(kind, ContentKind::Text) { Ok(Some(String::from_utf8(text).context("文字不是有效的 UTF-8")?)) } else { Ok(None) }
-    }.await;
-    match result {
+    core.set_status(&id, TransferStatus::Transferring).await;
+    let destination = match kind {
+        ContentKind::Files => Sink::File(path),
+        ContentKind::Text => Sink::Memory,
+    };
+    match receive_entry(&core, &id, &entry, destination, body, &cancelled).await {
         Ok(text) => {
             let mut sessions = core.incoming.lock().await;
             let session = sessions.get_mut(&id).context("会话已过期")?;
             if session.cancelled.is_cancelled() {
-                return Err(ApiError(StatusCode::CONFLICT, "传输已取消".into()));
+                return Err(ApiError::new(StatusCode::CONFLICT, "传输已取消"));
             }
             session.active.remove(&index);
             session.completed.insert(index);
             session.last_activity = Instant::now();
             session.text = text;
-            let size = session
-                .completed
-                .iter()
-                .map(|i| session.manifest.entries[*i].size)
-                .sum();
-            core.update_task(&id, |task| task.transferred_bytes = size)
-                .await;
+            let completed = session.completed_bytes();
+            drop(sessions);
+            core.set_progress(&id, completed).await;
             Ok(StatusCode::NO_CONTENT)
         }
         Err(error) => {
@@ -316,13 +280,89 @@ async fn upload(
                 .await
                 .get(&id)
                 .map(|session| session.staging.clone());
-            core.finish_task(&id, "failed", Some(error.to_string()), None, None)
+            core.finish_task(&id, TransferStatus::Failed, Outcome::error(&error))
                 .await;
             if let Some(staging) = staging {
                 let _ = tokio::fs::remove_dir_all(staging).await;
             }
             Err(error.into())
         }
+    }
+}
+
+/// Where an uploaded entry is written: a staged file, or memory for text messages.
+enum Sink {
+    File(PathBuf),
+    Memory,
+}
+
+/// Streams one entry from the request body, verifying its size and digest.
+/// Returns the decoded text for text messages.
+async fn receive_entry(
+    core: &Core,
+    id: &str,
+    entry: &Entry,
+    sink: Sink,
+    body: Body,
+    cancelled: &CancellationToken,
+) -> Result<Option<String>> {
+    let mut file = match &sink {
+        Sink::File(path) => Some(
+            tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .await?,
+        ),
+        Sink::Memory => None,
+    };
+    let mut text = Vec::new();
+    let mut hash = Sha256::new();
+    let mut received = 0u64;
+    let mut stream = body.into_data_stream();
+    let mut last_progress = Instant::now();
+    loop {
+        let next = tokio::time::timeout(Duration::from_secs(60), stream.next());
+        let chunk = tokio::select! {
+            _ = cancelled.cancelled() => bail!("传输已取消"),
+            chunk = next => chunk.context("传输超时")?,
+        };
+        let Some(chunk) = chunk else { break };
+        let chunk = chunk?;
+        received = received
+            .checked_add(chunk.len() as u64)
+            .context("文件大小溢出")?;
+        if received > entry.size {
+            bail!("收到的数据超过清单大小");
+        }
+        hash.update(&chunk);
+        match &mut file {
+            Some(file) => file.write_all(&chunk).await?,
+            None => text.extend_from_slice(&chunk),
+        }
+        if last_progress.elapsed() >= Duration::from_millis(100) {
+            let completed = {
+                let mut sessions = core.incoming.lock().await;
+                let session = sessions.get_mut(id).context("会话已过期")?;
+                session.last_activity = Instant::now();
+                session.completed_bytes()
+            };
+            core.set_progress(id, completed + received).await;
+            last_progress = Instant::now();
+        }
+    }
+    if received != entry.size || hex::encode(hash.finalize()) != entry.sha256 {
+        bail!("文件校验失败，请重新发送");
+    }
+    match file {
+        Some(mut file) => {
+            file.flush().await?;
+            file.sync_all().await?;
+            Ok(None)
+        }
+        None => Ok(Some(
+            String::from_utf8(text).context("文字不是有效的 UTF-8")?,
+        )),
     }
 }
 
@@ -343,11 +383,10 @@ async fn finish(
         || !session.active.is_empty()
         || session.completed.len() != session.manifest.count()
     {
-        return Err(ApiError(StatusCode::CONFLICT, "内容尚未完整接收".into()));
+        return Err(ApiError::new(StatusCode::CONFLICT, "内容尚未完整接收"));
     }
-    core.update_task(&id, |task| task.status = "verifying".into())
-        .await;
-    let saved = if matches!(session.manifest.kind, ContentKind::Files) {
+    core.set_status(&id, TransferStatus::Verifying).await;
+    let saved_path = if matches!(session.manifest.kind, ContentKind::Files) {
         let destination = session
             .receive_dir
             .join(format!("接收-{}-{}", crate::now(), &id[..8]));
@@ -361,6 +400,15 @@ async fn finish(
     session.finished = true;
     let text = session.text.take();
     drop(sessions);
-    core.finish_task(&id, "completed", None, saved, text).await;
+    core.finish_task(
+        &id,
+        TransferStatus::Completed,
+        Outcome {
+            saved_path,
+            text,
+            ..Outcome::default()
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }

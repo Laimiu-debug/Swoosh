@@ -1,8 +1,11 @@
 use crate::{
     files::{self, SourcePlan},
     identity,
-    model::{ContentKind, Manifest, OfferReply, SessionStatus, Transfer, PROTOCOL},
-    Core, Outgoing,
+    model::{
+        ContentKind, Direction, Manifest, OfferReply, SessionState, SessionStatus, Transfer,
+        TransferStatus, CONFIRM_WINDOW, MAX_ACTIVE_TRANSFERS, PROTOCOL,
+    },
+    Core, Outcome, Outgoing,
 };
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
@@ -50,8 +53,8 @@ impl Core {
             .cloned()
             .context("设备已离线，请重新连接")?;
         let mut outgoing = self.outgoing.lock().await;
-        if outgoing.len() >= 4 {
-            bail!("最多同时发送 4 项内容");
+        if outgoing.len() >= MAX_ACTIVE_TRANSFERS {
+            bail!("最多同时发送 {MAX_ACTIVE_TRANSFERS} 项内容");
         }
         let id = Uuid::new_v4().to_string();
         let control = Arc::new(Outgoing {
@@ -73,11 +76,11 @@ impl Core {
         let code = identity::verification_code(&manifest)?;
         self.add_task(Transfer {
             id: id.clone(),
-            direction: "send".into(),
+            direction: Direction::Send,
             peer_name: peer.device.name.clone(),
             title: manifest.title.clone(),
             kind,
-            status: "connecting".into(),
+            status: TransferStatus::Connecting,
             code,
             total_bytes: manifest.total_bytes(),
             transferred_bytes: 0,
@@ -93,21 +96,18 @@ impl Core {
             let result = core
                 .run_send(&task_id, &peer, manifest, plan, &control)
                 .await;
-            match result {
-                Ok(()) => {
-                    core.finish_task(&task_id, "completed", None, None, None)
-                        .await
-                }
+            let (status, outcome) = match result {
+                Ok(()) => (TransferStatus::Completed, Outcome::default()),
                 Err(error) => {
                     let status = if control.cancelled.is_cancelled() {
-                        "cancelled"
+                        TransferStatus::Cancelled
                     } else {
-                        "failed"
+                        TransferStatus::Failed
                     };
-                    core.finish_task(&task_id, status, Some(format!("{error:#}")), None, None)
-                        .await;
+                    (status, Outcome::error(format!("{error:#}")))
                 }
-            }
+            };
+            core.finish_task(&task_id, status, outcome).await;
             core.outgoing.lock().await.remove(&task_id);
         });
         Ok(id)
@@ -163,12 +163,12 @@ impl Core {
         plan: SourcePlan,
         control: &Outgoing,
     ) -> Result<()> {
-        self.update_task(id, |task| task.status = "awaiting_confirmation".into())
+        self.set_status(id, TransferStatus::AwaitingConfirmation)
             .await;
         let started = Instant::now();
         let mut confirmed = false;
         loop {
-            if started.elapsed() >= Duration::from_secs(60) {
+            if started.elapsed() >= CONFIRM_WINDOW {
                 bail!("确认超时，请重新发送");
             }
             tokio::select! {
@@ -185,23 +185,21 @@ impl Core {
                 )
                 .await?;
                 confirmed = true;
-                self.update_task(id, |task| task.status = "awaiting_receiver".into())
-                    .await;
+                self.set_status(id, TransferStatus::AwaitingReceiver).await;
             }
             let response = tokio::select! {
                 _ = control.cancelled.cancelled() => bail!("传输已取消"),
                 response = client.get(session_url).bearer_auth(token).send() => response?,
             };
             let status: SessionStatus = checked(response).await?.json().await?;
-            match status.status.as_str() {
-                "ready" if confirmed => break,
-                "cancelled" => bail!("对方拒绝或取消了传输"),
-                "waiting" => {}
+            match status.status {
+                SessionState::Ready if confirmed => break,
+                SessionState::Cancelled => bail!("对方拒绝或取消了传输"),
+                SessionState::Waiting => {}
                 _ => bail!("接收端会话状态异常"),
             }
         }
-        self.update_task(id, |task| task.status = "transferring".into())
-            .await;
+        self.set_status(id, TransferStatus::Transferring).await;
         let mut completed = 0u64;
         for (index, entry) in plan.selection.entries.iter().enumerate() {
             if entry.directory {
@@ -239,17 +237,17 @@ impl Core {
                     _ = control.cancelled.cancelled() => bail!("传输已取消"),
                     response = &mut request => break response?,
                     _ = tokio::time::sleep(Duration::from_millis(150)) => {
-                        self.update_task(id, |task| task.transferred_bytes = completed + progress.load(Ordering::Relaxed).min(entry.size)).await;
+                        let current = progress.load(Ordering::Relaxed).min(entry.size);
+                        self.set_progress(id, completed + current).await;
                     }
                 }
             };
             checked(response).await?;
             completed += entry.size;
-            self.update_task(id, |task| task.transferred_bytes = completed)
-                .await;
+            self.set_progress(id, completed).await;
         }
-        self.update_task(id, |task| task.status = "verifying".into())
-            .await;
+        self.set_status(id, TransferStatus::Verifying).await;
+
         let response = tokio::select! {
             _ = control.cancelled.cancelled() => bail!("传输已取消"),
             response = client.post(format!("{session_url}/finish")).bearer_auth(token).send() => response?,

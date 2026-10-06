@@ -1,5 +1,5 @@
 use std::{path::PathBuf, sync::Arc};
-use swoosh_core::{Config, Core, Peer, Selection, Snapshot};
+use swoosh_core::{Config, Core, Peer, Selection, Snapshot, DEFAULT_PORT, TEXT_LIMIT};
 use tauri::{Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
@@ -151,7 +151,7 @@ fn clear_history(core: State<'_, AppCore>) -> CommandResult<()> {
 
 #[tauri::command]
 fn copy_text(app: tauri::AppHandle, text: String) -> CommandResult<()> {
-    if text.len() > 1024 * 1024 {
+    if text.len() as u64 > TEXT_LIMIT {
         return Err("文字超过 1 MiB".into());
     }
     app.clipboard().write_text(text).map_err(message)
@@ -180,7 +180,7 @@ pub fn run() {
             let core = tauri::async_runtime::block_on(Core::start(Config {
                 data_dir,
                 receive_dir,
-                port: 53318,
+                port: DEFAULT_PORT,
                 name: None,
                 discovery: true,
                 listen_ip: std::net::Ipv4Addr::UNSPECIFIED,

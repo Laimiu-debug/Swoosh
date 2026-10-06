@@ -1,5 +1,5 @@
 use super::*;
-use model::{ContentKind, Entry, OfferReply, PROTOCOL};
+use model::{ContentKind, Entry, History, OfferReply, PROTOCOL};
 use tempfile::TempDir;
 
 async fn device(name: &str) -> (TempDir, Arc<Core>) {
@@ -24,7 +24,7 @@ async fn pair(sender: &Arc<Core>, receiver: &Arc<Core>) -> Peer {
         .unwrap()
 }
 
-async fn wait_task(core: &Core, id: &str, status: &str) -> Transfer {
+async fn wait_task(core: &Core, id: &str, status: TransferStatus) -> Transfer {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let snapshot = core.snapshot().await.unwrap();
@@ -32,7 +32,7 @@ async fn wait_task(core: &Core, id: &str, status: &str) -> Transfer {
                 if task.status == status {
                     return task.clone();
                 }
-                if is_terminal(&task.status) && !is_terminal(status) {
+                if task.status.is_terminal() && !status.is_terminal() {
                     panic!("Unexpected task result: {task:?}");
                 }
             }
@@ -44,14 +44,14 @@ async fn wait_task(core: &Core, id: &str, status: &str) -> Transfer {
 }
 
 async fn accept_both(sender: &Arc<Core>, receiver: &Arc<Core>, id: &str) -> String {
-    let outgoing = wait_task(sender, id, "awaiting_confirmation").await;
+    let outgoing = wait_task(sender, id, TransferStatus::AwaitingConfirmation).await;
     let incoming = receiver
         .snapshot()
         .await
         .unwrap()
         .transfers
         .into_iter()
-        .find(|t| t.status == "awaiting_confirmation")
+        .find(|t| t.status == TransferStatus::AwaitingConfirmation)
         .unwrap();
     assert_eq!(outgoing.code, incoming.code);
     receiver.respond(&incoming.id, true).await.unwrap();
@@ -84,8 +84,8 @@ async fn text_roundtrip_requires_both_confirmations_and_history_omits_text() {
         .await
         .unwrap();
     let incoming = accept_both(&sender, &receiver, &id).await;
-    wait_task(&sender, &id, "completed").await;
-    let result = wait_task(&receiver, &incoming, "completed").await;
+    wait_task(&sender, &id, TransferStatus::Completed).await;
+    let result = wait_task(&receiver, &incoming, TransferStatus::Completed).await;
     assert_eq!(result.text.as_deref(), Some(text));
     let history = receiver.snapshot().await.unwrap().history;
     assert_eq!(history.len(), 1);
@@ -112,8 +112,8 @@ async fn folder_roundtrip_preserves_unicode_zero_bytes_empty_directories_and_col
             .await
             .unwrap();
         let incoming = accept_both(&sender, &receiver, &id).await;
-        wait_task(&sender, &id, "completed").await;
-        let received = wait_task(&receiver, &incoming, "completed").await;
+        wait_task(&sender, &id, TransferStatus::Completed).await;
+        let received = wait_task(&receiver, &incoming, TransferStatus::Completed).await;
         let destination = PathBuf::from(received.saved_path.unwrap());
         assert!(destination.join("春游照片/空文件夹").is_dir());
         assert_eq!(
@@ -141,14 +141,14 @@ async fn rejection_and_cancellation_stop_both_sides_without_publishing() {
             .send_text(&peer.device.id, "测试".into())
             .await
             .unwrap();
-        wait_task(&sender, &id, "awaiting_confirmation").await;
+        wait_task(&sender, &id, TransferStatus::AwaitingConfirmation).await;
         let incoming = receiver
             .snapshot()
             .await
             .unwrap()
             .transfers
             .into_iter()
-            .find(|t| t.status == "awaiting_confirmation")
+            .find(|t| t.status == TransferStatus::AwaitingConfirmation)
             .unwrap();
         receiver.respond(&incoming.id, accept).await.unwrap();
         if accept {
@@ -156,9 +156,18 @@ async fn rejection_and_cancellation_stop_both_sides_without_publishing() {
         } else {
             sender.confirm_send(&id).await.unwrap();
         }
-        wait_task(&sender, &id, if accept { "cancelled" } else { "failed" }).await;
+        wait_task(
+            &sender,
+            &id,
+            if accept {
+                TransferStatus::Cancelled
+            } else {
+                TransferStatus::Failed
+            },
+        )
+        .await;
         if accept {
-            wait_task(&receiver, &incoming.id, "cancelled").await;
+            wait_task(&receiver, &incoming.id, TransferStatus::Cancelled).await;
         }
     }
     assert_eq!(
@@ -183,8 +192,8 @@ async fn changed_source_fails_integrity_check_and_removes_partial_content() {
         .await
         .unwrap();
     let incoming = accept_both(&sender, &receiver, &id).await;
-    wait_task(&sender, &id, "failed").await;
-    wait_task(&receiver, &incoming, "failed").await;
+    wait_task(&sender, &id, TransferStatus::Failed).await;
+    wait_task(&receiver, &incoming, TransferStatus::Failed).await;
     assert_eq!(
         std::fs::read_dir(receiver.receive_dir()).unwrap().count(),
         0
@@ -321,12 +330,12 @@ async fn identity_and_history_survive_restart() {
         .store
         .save(&History {
             id: "test".into(),
-            direction: "receive".into(),
+            direction: Direction::Receive,
             peer_name: "B".into(),
             title: "文件".into(),
             kind: ContentKind::Files,
             total_bytes: 12,
-            status: "completed".into(),
+            status: TransferStatus::Completed,
             saved_path: None,
             time: now(),
         })
@@ -430,7 +439,7 @@ async fn changing_directory_keeps_active_receives_and_old_history_in_their_locat
         .send_files(&peer.device.id, &selection.id)
         .await
         .unwrap();
-    wait_task(&sender, &id, "awaiting_confirmation").await;
+    wait_task(&sender, &id, TransferStatus::AwaitingConfirmation).await;
     let incoming = receiver.snapshot().await.unwrap().transfers[0].id.clone();
     receiver.respond(&incoming, true).await.unwrap();
     let staging = receiver
@@ -445,9 +454,9 @@ async fn changing_directory_keeps_active_receives_and_old_history_in_their_locat
     assert!(staging.is_dir());
     receiver.set_receive_dir(new_root.clone()).unwrap();
     sender.confirm_send(&id).await.unwrap();
-    wait_task(&sender, &id, "completed").await;
+    wait_task(&sender, &id, TransferStatus::Completed).await;
     let old_saved = PathBuf::from(
-        wait_task(&receiver, &incoming, "completed")
+        wait_task(&receiver, &incoming, TransferStatus::Completed)
             .await
             .saved_path
             .unwrap(),
@@ -463,9 +472,9 @@ async fn changing_directory_keeps_active_receives_and_old_history_in_their_locat
         .await
         .unwrap();
     let incoming = accept_both(&sender, &receiver, &id).await;
-    wait_task(&sender, &id, "completed").await;
+    wait_task(&sender, &id, TransferStatus::Completed).await;
     let new_saved = PathBuf::from(
-        wait_task(&receiver, &incoming, "completed")
+        wait_task(&receiver, &incoming, TransferStatus::Completed)
             .await
             .saved_path
             .unwrap(),

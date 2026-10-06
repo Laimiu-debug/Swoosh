@@ -2,7 +2,7 @@
 //! It binds only to localhost, automatically confirms test transfers, and is not
 //! part of the desktop application or installer. Never bind this fixture to LAN.
 use std::{collections::HashSet, net::Ipv4Addr, path::PathBuf, time::Duration};
-use swoosh_core::{Config, Core};
+use swoosh_core::{Config, Core, TransferStatus};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -25,11 +25,11 @@ async fn main() -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     while started.elapsed() < Duration::from_secs(600) {
         for transfer in core.snapshot().await?.transfers {
-            if transfer.status == "awaiting_confirmation" {
+            if transfer.status == TransferStatus::AwaitingConfirmation {
                 println!("Test confirmation: {}", transfer.code);
                 core.respond(&transfer.id, true).await?;
             }
-            if transfer.status == "completed" && reported.insert(transfer.id) {
+            if transfer.status == TransferStatus::Completed && reported.insert(transfer.id) {
                 println!(
                     "Test transfer complete: {} ({} bytes)",
                     transfer.title, transfer.total_bytes

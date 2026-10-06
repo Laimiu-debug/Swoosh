@@ -9,13 +9,16 @@ mod tests;
 mod tls;
 
 pub use files::{validate_manifest, validate_relative};
-pub use model::{Device, Peer, Selection, Snapshot, Transfer};
+pub use model::{
+    Device, Direction, Peer, Selection, Snapshot, Transfer, TransferStatus, DEFAULT_PORT,
+    TEXT_LIMIT,
+};
 pub use tls::normalize_address;
 
 use anyhow::{bail, Context, Result};
 use files::SourcePlan;
 use identity::Identity;
-use model::{History, Manifest};
+use model::{Manifest, CONFIRM_WINDOW};
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -61,6 +64,23 @@ pub(crate) struct Incoming {
     last_activity: std::time::Instant,
 }
 
+impl Incoming {
+    fn is_open(&self) -> bool {
+        !self.cancelled.is_cancelled() && !self.finished
+    }
+
+    fn confirm_window_open(&self) -> bool {
+        self.created.elapsed() < CONFIRM_WINDOW
+    }
+
+    fn completed_bytes(&self) -> u64 {
+        self.completed
+            .iter()
+            .map(|&index| self.manifest.entries[index].size)
+            .sum()
+    }
+}
+
 pub(crate) struct Outgoing {
     confirmed: AtomicBool,
     cancelled: CancellationToken,
@@ -86,14 +106,37 @@ struct ReceiveLocation {
     warning: Option<String>,
 }
 
+impl ReceiveLocation {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            warning: None,
+        }
+    }
+}
+
 pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
 }
-pub(crate) fn is_terminal(status: &str) -> bool {
-    matches!(status, "completed" | "failed" | "rejected" | "cancelled")
+
+/// How a transfer ended, recorded on the task and in history.
+#[derive(Default)]
+pub(crate) struct Outcome {
+    pub error: Option<String>,
+    pub saved_path: Option<String>,
+    pub text: Option<String>,
+}
+
+impl Outcome {
+    pub(crate) fn error(error: impl ToString) -> Self {
+        Self {
+            error: Some(error.to_string()),
+            ..Self::default()
+        }
+    }
 }
 
 impl Core {
@@ -102,23 +145,16 @@ impl Core {
         std::fs::create_dir_all(&config.data_dir)?;
         let identity = Identity::load(&config.data_dir, config.name)?;
         let store = store::Store::open(&config.data_dir.join("swoosh.sqlite3"))?;
-        let receive_location = match store.receive_dir()? {
-            Some(path) => match prepare_receive_dir(&path, false) {
-                Ok(path) => ReceiveLocation {
-                    path,
-                    warning: None,
-                },
-                Err(_) => ReceiveLocation {
-                    path: prepare_receive_dir(&config.receive_dir, true)?,
-                    warning: Some(
-                        "之前设置的接收文件夹不可用，暂时使用默认位置。可重新选择文件夹。".into(),
-                    ),
-                },
-            },
-            None => ReceiveLocation {
+        let custom = store.receive_dir()?;
+        let receive_location = match custom.map(|path| prepare_receive_dir(&path, false)) {
+            Some(Ok(path)) => ReceiveLocation::new(path),
+            Some(Err(_)) => ReceiveLocation {
                 path: prepare_receive_dir(&config.receive_dir, true)?,
-                warning: None,
+                warning: Some(
+                    "之前设置的接收文件夹不可用，暂时使用默认位置。可重新选择文件夹。".into(),
+                ),
             },
+            None => ReceiveLocation::new(prepare_receive_dir(&config.receive_dir, true)?),
         };
         let listener = std::net::TcpListener::bind((config.listen_ip, config.port))
             .or_else(|_| std::net::TcpListener::bind((config.listen_ip, 0)))?;
@@ -196,23 +232,19 @@ impl Core {
 
     pub fn set_receive_dir(&self, path: PathBuf) -> Result<PathBuf> {
         let path = prepare_receive_dir(&path, false)?;
-        let mut location = self.receive_location.write().unwrap();
-        self.store.set_receive_dir(Some(&path))?;
-        *location = ReceiveLocation {
-            path: path.clone(),
-            warning: None,
-        };
-        Ok(path)
+        self.apply_receive_dir(path, true)
     }
 
     pub fn reset_receive_dir(&self) -> Result<PathBuf> {
         let path = prepare_receive_dir(&self.default_receive_dir, true)?;
+        self.apply_receive_dir(path, false)
+    }
+
+    fn apply_receive_dir(&self, path: PathBuf, custom: bool) -> Result<PathBuf> {
         let mut location = self.receive_location.write().unwrap();
-        self.store.set_receive_dir(None)?;
-        *location = ReceiveLocation {
-            path: path.clone(),
-            warning: None,
-        };
+        self.store
+            .set_receive_dir(custom.then_some(path.as_path()))?;
+        *location = ReceiveLocation::new(path.clone());
         Ok(path)
     }
 
@@ -362,16 +394,14 @@ impl Core {
     pub async fn respond(&self, id: &str, accept: bool) -> Result<()> {
         let mut sessions = self.incoming.lock().await;
         let session = sessions.get_mut(id).context("请求已过期")?;
-        if session.cancelled.is_cancelled()
-            || session.created.elapsed() >= Duration::from_secs(60)
-            || session.approved
-        {
+        if session.cancelled.is_cancelled() || !session.confirm_window_open() || session.approved {
             bail!("请求已过期或已处理");
         }
         if !accept {
             session.cancelled.cancel();
             drop(sessions);
-            self.finish_task(id, "rejected", None, None, None).await;
+            self.finish_task(id, TransferStatus::Rejected, Outcome::default())
+                .await;
             return Ok(());
         }
         if matches!(session.manifest.kind, model::ContentKind::Files) {
@@ -388,8 +418,7 @@ impl Core {
         }
         session.approved = true;
         drop(sessions);
-        self.update_task(id, |task| task.status = "awaiting_sender".into())
-            .await;
+        self.set_status(id, TransferStatus::AwaitingSender).await;
         Ok(())
     }
 
@@ -404,7 +433,8 @@ impl Core {
                 session.staging.clone()
             })
         };
-        self.finish_task(id, "cancelled", None, None, None).await;
+        self.finish_task(id, TransferStatus::Cancelled, Outcome::default())
+            .await;
         if let Some(path) = staging {
             let _ = tokio::fs::remove_dir_all(path).await;
         }
@@ -416,7 +446,7 @@ impl Core {
             .write()
             .await
             .transfers
-            .retain(|task| task.id != id || !is_terminal(&task.status));
+            .retain(|task| task.id != id || !task.status.is_terminal());
     }
 
     async fn update_task(&self, id: &str, update: impl FnOnce(&mut Transfer)) {
@@ -428,55 +458,48 @@ impl Core {
             .iter_mut()
             .find(|task| task.id == id)
         {
-            if !is_terminal(&task.status) {
+            if !task.status.is_terminal() {
                 update(task);
             }
         }
     }
 
+    async fn set_status(&self, id: &str, status: TransferStatus) {
+        self.update_task(id, |task| task.status = status).await;
+    }
+
+    async fn set_progress(&self, id: &str, bytes: u64) {
+        self.update_task(id, |task| task.transferred_bytes = bytes)
+            .await;
+    }
+
     async fn add_task(&self, task: Transfer) {
         let mut state = self.state.write().await;
         if state.transfers.len() >= 20 {
-            if let Some(index) = state.transfers.iter().position(|t| is_terminal(&t.status)) {
+            if let Some(index) = state.transfers.iter().position(|t| t.status.is_terminal()) {
                 state.transfers.remove(index);
             }
         }
         state.transfers.push(task);
     }
 
-    async fn finish_task(
-        &self,
-        id: &str,
-        status: &str,
-        error: Option<String>,
-        saved: Option<String>,
-        text: Option<String>,
-    ) {
+    async fn finish_task(&self, id: &str, status: TransferStatus, outcome: Outcome) {
+        debug_assert!(status.is_terminal());
         let mut state = self.state.write().await;
         let Some(task) = state.transfers.iter_mut().find(|task| task.id == id) else {
             return;
         };
-        if is_terminal(&task.status) {
+        if task.status.is_terminal() {
             return;
         }
-        task.status = status.into();
-        task.error = error;
-        task.saved_path = saved;
-        task.text = text;
-        if status == "completed" {
+        task.status = status;
+        task.error = outcome.error;
+        task.saved_path = outcome.saved_path;
+        task.text = outcome.text;
+        if status == TransferStatus::Completed {
             task.transferred_bytes = task.total_bytes;
         }
-        let history = History {
-            id: task.id.clone(),
-            direction: task.direction.clone(),
-            peer_name: task.peer_name.clone(),
-            title: task.title.clone(),
-            kind: task.kind.clone(),
-            total_bytes: task.total_bytes,
-            status: status.into(),
-            saved_path: task.saved_path.clone(),
-            time: now(),
-        };
+        let history = task.to_history(now());
         if let Err(error) = self.store.save(&history) {
             state.warning = Some(format!("历史记录保存失败：{error}"));
         }
@@ -488,10 +511,9 @@ impl Core {
             sessions
                 .iter()
                 .filter(|(_, session)| {
-                    !session.cancelled.is_cancelled()
-                        && !session.finished
-                        && ((session.created.elapsed() > Duration::from_secs(60)
-                            && (!session.approved || !session.sender_confirmed))
+                    let unconfirmed = !session.approved || !session.sender_confirmed;
+                    session.is_open()
+                        && ((unconfirmed && !session.confirm_window_open())
                             || session.last_activity.elapsed() > Duration::from_secs(120))
                 })
                 .map(|(id, _)| id.clone())
@@ -505,8 +527,7 @@ impl Core {
             .await
             .retain(|_, time| time.elapsed() < Duration::from_secs(600));
         self.incoming.lock().await.retain(|_, session| {
-            session.created.elapsed() < Duration::from_secs(600)
-                || (!session.cancelled.is_cancelled() && !session.finished)
+            session.created.elapsed() < Duration::from_secs(600) || session.is_open()
         });
     }
 
@@ -525,11 +546,14 @@ impl Core {
         if path == self.receive_dir() {
             return Ok(path);
         }
+        let received = |direction, status| {
+            direction == Direction::Receive && status == TransferStatus::Completed
+        };
         let mut roots: Vec<String> = self
             .store
             .list()?
             .into_iter()
-            .filter(|item| item.direction == "receive" && item.status == "completed")
+            .filter(|item| received(item.direction, item.status))
             .filter_map(|item| item.saved_path)
             .collect();
         roots.extend(
@@ -538,7 +562,7 @@ impl Core {
                 .await
                 .transfers
                 .iter()
-                .filter(|item| item.direction == "receive" && item.status == "completed")
+                .filter(|item| received(item.direction, item.status))
                 .filter_map(|item| item.saved_path.clone()),
         );
         for root in roots {
@@ -585,7 +609,8 @@ fn local_addresses() -> Vec<IpAddr> {
         .filter(|interface| !interface.is_loopback())
         .map(|interface| interface.ip())
         .filter(|ip| {
-            ip.is_ipv4() && normalize_address(&SocketAddr::new(*ip, 53318).to_string()).is_ok()
+            ip.is_ipv4()
+                && normalize_address(&SocketAddr::new(*ip, DEFAULT_PORT).to_string()).is_ok()
         })
         .collect::<HashSet<_>>()
         .into_iter()

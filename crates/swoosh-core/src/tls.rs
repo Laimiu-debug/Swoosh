@@ -1,4 +1,4 @@
-use crate::identity::digest;
+use crate::{identity::digest, model::DEFAULT_PORT};
 use anyhow::{bail, Result};
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
@@ -106,7 +106,7 @@ pub fn normalize_address(input: &str) -> Result<String> {
     let address: SocketAddr = if let Ok(address) = input.parse() {
         address
     } else {
-        SocketAddr::new(input.parse::<IpAddr>()?, 53318)
+        SocketAddr::new(input.parse::<IpAddr>()?, DEFAULT_PORT)
     };
     if address.port() == 0 || address.ip().is_unspecified() || address.ip().is_multicast() {
         bail!("请输入有效的局域网 IP 和端口，例如 192.168.1.8:53318");
