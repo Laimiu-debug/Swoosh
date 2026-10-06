@@ -5,6 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@11.25.0",
   "scripts": {
+    "site": "node website/preview.mjs",
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "tsc -b && vite build",
     "check": "tsc -b && node scripts/generate-tokens.mjs --check && node scripts/generate-brand.mjs --check",

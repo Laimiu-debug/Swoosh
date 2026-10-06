@@ -2,6 +2,8 @@
 
 Swoosh 是面向个人用户的本地局域网传输软件。文件、文件夹、照片和文字，选一下，嗖过去。
 
+[访问官网](https://swoosh-laimiu.laimiu-new.chatgpt.site) · [下载 Windows 预览版](https://github.com/Laimiu-debug/Swoosh/releases/tag/v0.1.0-preview.1) · [查看开发进度](docs/implementation-status.md)
+
 应用使用 **Tauri 2 + Rust + React + TypeScript + Vite**，运行在独立桌面窗口中。发布版内嵌界面资源，无需启动浏览器或连接互联网。
 
 ## 当前可用功能
@@ -53,6 +55,7 @@ src-tauri/                 本地窗口、系统对话框与受限 IPC 命令
 crates/swoosh-core/         身份、发现、TLS、传输、文件校验与 SQLite
 design/                    设计令牌、品牌图标与独立设计预览
 docs/                      需求、设计规范与开发进度
+website/                   官网源码、本机预览服务与发布身份
 scripts/                   启动与资源生成脚本
 ```
 
@@ -67,6 +70,8 @@ scripts/                   启动与资源生成脚本
 - [品牌图标](design/brand/README.md)：飞行「小信使」图标，包含 SVG、PNG、Windows ICO 和小尺寸预览。
 
 设计预览是独立的视觉参考，应用代码位于 `src`、`src-tauri` 和 `crates`。
+
+官网采用独立静态页面，源码位于 `website/dist`，下载链接指向 GitHub Releases。运行 `pnpm site` 可在 `http://127.0.0.1:4180/` 预览。维护说明见 [官网 README](website/README.md)。
 
 ## 维护设计令牌
 

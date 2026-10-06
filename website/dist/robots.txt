@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://swoosh-laimiu.laimiu-new.chatgpt.site/sitemap.xml

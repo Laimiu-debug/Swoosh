@@ -24,6 +24,8 @@ Desktop.ini
 # 应用依赖、编译产物与本地测试数据
 node_modules/
 dist/
+!website/dist/
+!website/dist/**
 target/
 src-tauri/gen/
 .local/
