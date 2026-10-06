@@ -4150,7 +4150,7 @@ dependencies = [
 
 [[package]]
 name = "swoosh"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "swoosh-core",
@@ -4164,7 +4164,7 @@ dependencies = [
 
 [[package]]
 name = "swoosh-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",

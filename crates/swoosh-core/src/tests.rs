@@ -161,7 +161,10 @@ async fn rejection_and_cancellation_stop_both_sides_without_publishing() {
             wait_task(&receiver, &incoming.id, "cancelled").await;
         }
     }
-    assert_eq!(std::fs::read_dir(&receiver.receive_dir).unwrap().count(), 0);
+    assert_eq!(
+        std::fs::read_dir(receiver.receive_dir()).unwrap().count(),
+        0
+    );
     sender.stop();
     receiver.stop();
 }
@@ -182,7 +185,10 @@ async fn changed_source_fails_integrity_check_and_removes_partial_content() {
     let incoming = accept_both(&sender, &receiver, &id).await;
     wait_task(&sender, &id, "failed").await;
     wait_task(&receiver, &incoming, "failed").await;
-    assert_eq!(std::fs::read_dir(&receiver.receive_dir).unwrap().count(), 0);
+    assert_eq!(
+        std::fs::read_dir(receiver.receive_dir()).unwrap().count(),
+        0
+    );
     sender.stop();
     receiver.stop();
 }
@@ -262,7 +268,10 @@ async fn protocol_rejects_unauthorized_streams_replays_tampering_and_changed_cer
             .status(),
         403
     );
-    assert_eq!(std::fs::read_dir(&receiver.receive_dir).unwrap().count(), 0);
+    assert_eq!(
+        std::fs::read_dir(receiver.receive_dir()).unwrap().count(),
+        0
+    );
     let (wrong, _) = tls::client(Some("0".repeat(64))).unwrap();
     assert!(wrong.get(format!("{base}/v1/info")).send().await.is_err());
     sender.stop();
@@ -339,4 +348,186 @@ async fn identity_and_history_survive_restart() {
     second.clear_history().unwrap();
     assert!(second.snapshot().await.unwrap().history.is_empty());
     second.stop();
+}
+
+#[tokio::test]
+async fn receive_directory_persists_validates_and_can_reset_or_recover() {
+    let (dir, first) = device("自定义接收位置").await;
+    let original = first.receive_dir();
+    let chosen = dir.path().join("我收到的文件 📨");
+    std::fs::create_dir(&chosen).unwrap();
+    let canonical = chosen.canonicalize().unwrap();
+    assert_eq!(first.set_receive_dir(chosen.clone()).unwrap(), canonical);
+    assert_eq!(std::fs::read_dir(&chosen).unwrap().count(), 0);
+    let not_directory = dir.path().join("不是文件夹.txt");
+    std::fs::write(&not_directory, b"keep").unwrap();
+    for invalid in [
+        not_directory,
+        dir.path().join("不存在的目录"),
+        PathBuf::from("relative"),
+    ] {
+        assert!(first.set_receive_dir(invalid).is_err());
+        assert_eq!(first.receive_dir(), canonical);
+    }
+    first.stop();
+    let restart = || Config {
+        data_dir: dir.path().join("state"),
+        receive_dir: dir.path().join("received"),
+        name: Some("自定义接收位置".into()),
+        port: 0,
+        discovery: false,
+        listen_ip: Ipv4Addr::LOCALHOST,
+    };
+    let second = Core::start(restart()).await.unwrap();
+    assert_eq!(second.receive_dir(), canonical);
+    assert!(second
+        .snapshot()
+        .await
+        .unwrap()
+        .receive_dir_warning
+        .is_none());
+    second.stop();
+    // Losing access to a saved folder must not prevent the app from opening.
+    std::fs::remove_dir(&chosen).unwrap();
+    let recovered = Core::start(restart()).await.unwrap();
+    assert_eq!(recovered.receive_dir(), original);
+    assert!(recovered
+        .snapshot()
+        .await
+        .unwrap()
+        .receive_dir_warning
+        .is_some());
+    assert_eq!(recovered.store.receive_dir().unwrap(), Some(canonical));
+    recovered.reset_receive_dir().unwrap();
+    assert!(recovered
+        .snapshot()
+        .await
+        .unwrap()
+        .receive_dir_warning
+        .is_none());
+    assert!(recovered.store.receive_dir().unwrap().is_none());
+    recovered.stop();
+    let last = Core::start(restart()).await.unwrap();
+    assert_eq!(last.receive_dir(), original);
+    assert!(last.snapshot().await.unwrap().receive_dir_warning.is_none());
+    last.stop();
+}
+
+#[tokio::test]
+async fn changing_directory_keeps_active_receives_and_old_history_in_their_locations() {
+    let (source, sender) = device("A").await;
+    let (target, receiver) = device("B").await;
+    let old_root = receiver.receive_dir();
+    let new_root = target.path().join("新接收目录");
+    std::fs::create_dir(&new_root).unwrap();
+    let new_root = new_root.canonicalize().unwrap();
+    let file = source.path().join("测试文件.txt");
+    let bytes = b"old and new destinations";
+    std::fs::write(&file, bytes).unwrap();
+    let selection = sender.select(vec![file]).await.unwrap();
+    let peer = pair(&sender, &receiver).await;
+    let id = sender
+        .send_files(&peer.device.id, &selection.id)
+        .await
+        .unwrap();
+    wait_task(&sender, &id, "awaiting_confirmation").await;
+    let incoming = receiver.snapshot().await.unwrap().transfers[0].id.clone();
+    receiver.respond(&incoming, true).await.unwrap();
+    let staging = receiver
+        .incoming
+        .lock()
+        .await
+        .get(&incoming)
+        .unwrap()
+        .staging
+        .clone();
+    assert!(staging.starts_with(&old_root));
+    assert!(staging.is_dir());
+    receiver.set_receive_dir(new_root.clone()).unwrap();
+    sender.confirm_send(&id).await.unwrap();
+    wait_task(&sender, &id, "completed").await;
+    let old_saved = PathBuf::from(
+        wait_task(&receiver, &incoming, "completed")
+            .await
+            .saved_path
+            .unwrap(),
+    );
+    assert_eq!(old_saved.parent().unwrap(), old_root);
+    assert!(!staging.exists());
+    assert_eq!(
+        std::fs::read(old_saved.join("测试文件.txt")).unwrap(),
+        bytes
+    );
+    let id = sender
+        .send_files(&peer.device.id, &selection.id)
+        .await
+        .unwrap();
+    let incoming = accept_both(&sender, &receiver, &id).await;
+    wait_task(&sender, &id, "completed").await;
+    let new_saved = PathBuf::from(
+        wait_task(&receiver, &incoming, "completed")
+            .await
+            .saved_path
+            .unwrap(),
+    );
+    assert_eq!(new_saved.parent().unwrap(), new_root);
+    assert_eq!(
+        std::fs::read(new_saved.join("测试文件.txt")).unwrap(),
+        bytes
+    );
+    assert!(receiver
+        .received_path(&old_saved.to_string_lossy())
+        .await
+        .is_ok());
+    assert!(receiver
+        .received_path(&new_saved.to_string_lossy())
+        .await
+        .is_ok());
+    let unrelated = new_root.join("不是接收内容");
+    std::fs::create_dir(&unrelated).unwrap();
+    assert!(receiver
+        .received_path(&unrelated.to_string_lossy())
+        .await
+        .is_err());
+    assert!(receiver
+        .received_path(&source.path().to_string_lossy())
+        .await
+        .is_err());
+    let stored_history = receiver.store.list().unwrap();
+    receiver.clear_history().unwrap();
+    // Completed cards remain usable after clearing the history list.
+    assert!(receiver
+        .received_path(&old_saved.to_string_lossy())
+        .await
+        .is_ok());
+    // Restore the records to exercise historical links after a restart.
+    for item in stored_history {
+        receiver.store.save(&item).unwrap();
+    }
+    receiver.stop();
+    let restarted = Core::start(Config {
+        data_dir: target.path().join("state"),
+        receive_dir: target.path().join("received"),
+        name: Some("B".into()),
+        port: 0,
+        discovery: false,
+        listen_ip: Ipv4Addr::LOCALHOST,
+    })
+    .await
+    .unwrap();
+    assert_eq!(restarted.receive_dir(), new_root);
+    assert!(restarted
+        .received_path(&old_saved.to_string_lossy())
+        .await
+        .is_ok());
+    assert!(restarted
+        .received_path(&new_saved.to_string_lossy())
+        .await
+        .is_ok());
+    assert!(restarted
+        .received_path(&unrelated.to_string_lossy())
+        .await
+        .is_err());
+    sender.stop();
+    restarted.stop();
 }

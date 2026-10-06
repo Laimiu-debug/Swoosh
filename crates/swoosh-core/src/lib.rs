@@ -54,6 +54,7 @@ pub(crate) struct Incoming {
     completed: HashSet<usize>,
     active: HashSet<usize>,
     staging: PathBuf,
+    receive_dir: PathBuf,
     text: Option<String>,
     finished: bool,
     created: std::time::Instant,
@@ -67,7 +68,8 @@ pub(crate) struct Outgoing {
 
 pub struct Core {
     identity: Identity,
-    receive_dir: PathBuf,
+    receive_location: std::sync::RwLock<ReceiveLocation>,
+    default_receive_dir: PathBuf,
     port: u16,
     state: RwLock<RuntimeState>,
     incoming: Mutex<HashMap<String, Incoming>>,
@@ -77,6 +79,11 @@ pub struct Core {
     mdns: Option<mdns_sd::ServiceDaemon>,
     server: axum_server::Handle,
     shutdown: CancellationToken,
+}
+
+struct ReceiveLocation {
+    path: PathBuf,
+    warning: Option<String>,
 }
 
 pub fn now() -> u64 {
@@ -93,10 +100,26 @@ impl Core {
     pub async fn start(config: Config) -> Result<Arc<Self>> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         std::fs::create_dir_all(&config.data_dir)?;
-        std::fs::create_dir_all(&config.receive_dir)?;
-        let receive_dir = config.receive_dir.canonicalize()?;
         let identity = Identity::load(&config.data_dir, config.name)?;
         let store = store::Store::open(&config.data_dir.join("swoosh.sqlite3"))?;
+        let receive_location = match store.receive_dir()? {
+            Some(path) => match prepare_receive_dir(&path, false) {
+                Ok(path) => ReceiveLocation {
+                    path,
+                    warning: None,
+                },
+                Err(_) => ReceiveLocation {
+                    path: prepare_receive_dir(&config.receive_dir, true)?,
+                    warning: Some(
+                        "之前设置的接收文件夹不可用，暂时使用默认位置。可重新选择文件夹。".into(),
+                    ),
+                },
+            },
+            None => ReceiveLocation {
+                path: prepare_receive_dir(&config.receive_dir, true)?,
+                warning: None,
+            },
+        };
         let listener = std::net::TcpListener::bind((config.listen_ip, config.port))
             .or_else(|_| std::net::TcpListener::bind((config.listen_ip, 0)))?;
         listener.set_nonblocking(true)?;
@@ -113,7 +136,8 @@ impl Core {
         };
         let core = Arc::new(Self {
             identity,
-            receive_dir,
+            receive_location: std::sync::RwLock::new(receive_location),
+            default_receive_dir: config.receive_dir,
             port,
             store,
             mdns,
@@ -166,6 +190,32 @@ impl Core {
         self.port
     }
 
+    pub fn receive_dir(&self) -> PathBuf {
+        self.receive_location.read().unwrap().path.clone()
+    }
+
+    pub fn set_receive_dir(&self, path: PathBuf) -> Result<PathBuf> {
+        let path = prepare_receive_dir(&path, false)?;
+        let mut location = self.receive_location.write().unwrap();
+        self.store.set_receive_dir(Some(&path))?;
+        *location = ReceiveLocation {
+            path: path.clone(),
+            warning: None,
+        };
+        Ok(path)
+    }
+
+    pub fn reset_receive_dir(&self) -> Result<PathBuf> {
+        let path = prepare_receive_dir(&self.default_receive_dir, true)?;
+        let mut location = self.receive_location.write().unwrap();
+        self.store.set_receive_dir(None)?;
+        *location = ReceiveLocation {
+            path: path.clone(),
+            warning: None,
+        };
+        Ok(path)
+    }
+
     pub async fn snapshot(&self) -> Result<Snapshot> {
         let state = self.state.read().await;
         let mut peers: Vec<_> = state.peers.values().cloned().collect();
@@ -174,10 +224,12 @@ impl Core {
             .into_iter()
             .map(|ip| SocketAddr::new(ip, self.port).to_string())
             .collect();
+        let location = self.receive_location.read().unwrap();
         Ok(Snapshot {
             device: self.device().clone(),
             addresses,
-            receive_dir: self.receive_dir.to_string_lossy().into_owned(),
+            receive_dir: location.path.to_string_lossy().into_owned(),
+            receive_dir_warning: location.warning.clone(),
             peers,
             transfers: state.transfers.clone(),
             history: self.store.list()?,
@@ -466,15 +518,64 @@ impl Core {
         }
     }
 
-    pub fn received_path(&self, input: &str) -> Result<PathBuf> {
+    pub async fn received_path(&self, input: &str) -> Result<PathBuf> {
         let path = Path::new(input)
             .canonicalize()
             .context("文件已移动或删除")?;
-        if !path.starts_with(&self.receive_dir) {
-            bail!("只能打开 Swoosh 接收目录中的内容");
+        if path == self.receive_dir() {
+            return Ok(path);
         }
-        Ok(path)
+        let mut roots: Vec<String> = self
+            .store
+            .list()?
+            .into_iter()
+            .filter(|item| item.direction == "receive" && item.status == "completed")
+            .filter_map(|item| item.saved_path)
+            .collect();
+        roots.extend(
+            self.state
+                .read()
+                .await
+                .transfers
+                .iter()
+                .filter(|item| item.direction == "receive" && item.status == "completed")
+                .filter_map(|item| item.saved_path.clone()),
+        );
+        for root in roots {
+            if let Ok(root) = Path::new(&root).canonicalize() {
+                if path.starts_with(root) {
+                    return Ok(path);
+                }
+            }
+        }
+        bail!("只能打开当前接收文件夹或已接收的内容")
     }
+}
+
+fn prepare_receive_dir(path: &Path, create: bool) -> Result<PathBuf> {
+    if !path.is_absolute() {
+        bail!("请选择完整的文件夹路径");
+    }
+    if create {
+        std::fs::create_dir_all(path).context("无法创建默认接收文件夹")?;
+    }
+    let path = path.canonicalize().context("接收文件夹不存在或无法访问")?;
+    if !path.is_dir() {
+        bail!("请选择文件夹，不能选择文件");
+    }
+    let probe = path.join(format!(".swoosh-{}.write-check", uuid::Uuid::new_v4()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .context("无法写入此文件夹，请选择有写入权限的位置")?;
+    use std::io::Write;
+    let writable = file.write_all(b"Swoosh");
+    drop(file);
+    let cleanup = std::fs::remove_file(probe);
+    writable.context("无法写入此文件夹，请检查权限或磁盘空间")?;
+    cleanup.context("无法清理文件夹写入检查文件")?;
+    Ok(path)
 }
 
 fn local_addresses() -> Vec<IpAddr> {

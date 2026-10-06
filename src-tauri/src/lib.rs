@@ -54,6 +54,47 @@ async fn clear_selection(core: State<'_, AppCore>) -> CommandResult<()> {
 }
 
 #[tauri::command]
+async fn choose_receive_dir(
+    app: tauri::AppHandle,
+    core: State<'_, AppCore>,
+) -> CommandResult<Option<String>> {
+    let current = core.receive_dir();
+    let chosen = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("选择接收文件夹")
+            .set_directory(current)
+            .blocking_pick_folder()
+    })
+    .await
+    .map_err(message)?;
+    let Some(chosen) = chosen else {
+        return Ok(None);
+    };
+    let path = chosen.into_path().map_err(message)?;
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        core.set_receive_dir(path)
+            .map(|path| Some(path.to_string_lossy().into_owned()))
+            .map_err(message)
+    })
+    .await
+    .map_err(message)?
+}
+
+#[tauri::command]
+async fn reset_receive_dir(core: State<'_, AppCore>) -> CommandResult<String> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        core.reset_receive_dir()
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(message)
+    })
+    .await
+    .map_err(message)?
+}
+
+#[tauri::command]
 async fn connect_device(core: State<'_, AppCore>, address: String) -> CommandResult<Peer> {
     core.connect(&address).await.map_err(message)
 }
@@ -117,12 +158,12 @@ fn copy_text(app: tauri::AppHandle, text: String) -> CommandResult<()> {
 }
 
 #[tauri::command]
-fn open_received(
+async fn open_received(
     app: tauri::AppHandle,
     core: State<'_, AppCore>,
     path: String,
 ) -> CommandResult<()> {
-    let safe_path = core.received_path(&path).map_err(message)?;
+    let safe_path = core.received_path(&path).await.map_err(message)?;
     app.opener()
         .open_path(safe_path.to_string_lossy(), None::<&str>)
         .map_err(message)
@@ -152,6 +193,8 @@ pub fn run() {
             choose_files,
             select_dropped,
             clear_selection,
+            choose_receive_dir,
+            reset_receive_dir,
             connect_device,
             send_files,
             send_text,

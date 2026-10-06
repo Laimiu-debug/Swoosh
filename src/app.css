@@ -87,6 +87,8 @@ footer { display: flex; align-items: center; justify-content: space-between; pad
 footer > span:first-child { display: flex; align-items: center; gap: 8px; }
 footer .text-button { font-size: 12px; color: var(--sw-color-text-secondary); }
 footer .icon { width: 15px; height: 15px; }
+.receive-folder-actions { display: flex; align-items: center; gap: 14px; }
+.receive-folder-actions > button:last-child { color: var(--sw-color-focus); }
 .banner, .error-banner { padding: 12px 16px; border-radius: 12px; font-size: 13px; margin-bottom: 16px; background: var(--sw-color-warning-soft); color: var(--sw-color-warning); }
 .error-banner { display: flex; align-items: center; gap: 12px; justify-content: space-between; background: var(--sw-color-danger-soft); color: var(--sw-color-danger); overflow-wrap: anywhere; }
 .error-banner .icon-button { height: 28px; width: 28px; }
@@ -116,6 +118,13 @@ dialog h2 { font-size: 22px; }
 .address-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .address-row code { font: 13px var(--sw-font-family-mono); overflow-wrap: anywhere; }
 .field-hint { font-size: 12px; color: var(--sw-color-text-muted); margin-top: 8px; }
+.receive-location { margin: 20px 0 16px; padding: 16px; border-radius: 12px; background: var(--sw-color-surface-subtle); }
+.receive-location > span { font-size: 14px; }
+.receive-location > p { margin: 8px 0 14px; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.receive-location-hint { font-size: 14px; line-height: 1.75; color: var(--sw-color-text-secondary); }
+.receive-location-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+.receive-warning { display: flex; gap: 14px; justify-content: space-between; align-items: center; }
+.receive-warning .text-button { flex-shrink: 0; }
 .dialog-actions { justify-content: flex-end; margin-top: 20px; }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 12px 18px; background: var(--sw-color-text-primary); color: var(--sw-color-surface); border-radius: 12px; font-size: 14px; box-shadow: var(--sw-shadow-dialog); }
 @media (max-width: 760px) { .app-header { padding: 20px 20px 0; } main { padding: 24px 20px 0; } footer { padding-inline: 20px; } .greeting { align-items: flex-start; flex-direction: column; gap: 12px; } .workspace { grid-template-columns: 1fr; } .empty-devices { min-height: 210px; } }

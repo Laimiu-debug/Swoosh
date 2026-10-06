@@ -120,6 +120,7 @@ pub struct Snapshot {
     pub device: Device,
     pub addresses: Vec<String>,
     pub receive_dir: String,
+    pub receive_dir_warning: Option<String>,
     pub peers: Vec<Peer>,
     pub transfers: Vec<Transfer>,
     pub history: Vec<History>,

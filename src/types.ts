@@ -8,4 +8,4 @@ export type Transfer = {
   error: string | null; savedPath: string | null; text: string | null;
 };
 export type History = Omit<Transfer, 'code' | 'transferredBytes' | 'count' | 'error' | 'text'> & { time: number };
-export type Snapshot = { device: Device; addresses: string[]; receiveDir: string; peers: Peer[]; transfers: Transfer[]; history: History[]; networkWarning: string | null };
+export type Snapshot = { device: Device; addresses: string[]; receiveDir: string; receiveDirWarning: string | null; peers: Peer[]; transfers: Transfer[]; history: History[]; networkWarning: string | null };

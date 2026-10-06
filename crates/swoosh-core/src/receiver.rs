@@ -93,6 +93,8 @@ async fn offer(
     let id = Uuid::new_v4().to_string();
     let token = Uuid::new_v4().simple().to_string();
     let code = identity::verification_code(&offer.manifest)?;
+    // Pin the destination to this request, including when settings change before confirmation.
+    let receive_dir = core.receive_dir();
     core.add_task(Transfer {
         id: id.clone(),
         direction: "receive".into(),
@@ -119,7 +121,8 @@ async fn offer(
             cancelled: CancellationToken::new(),
             completed: HashSet::new(),
             active: HashSet::new(),
-            staging: core.receive_dir.join(format!(".swoosh-{id}.partial")),
+            staging: receive_dir.join(format!(".swoosh-{id}.partial")),
+            receive_dir,
             text: None,
             finished: false,
             created: Instant::now(),
@@ -345,7 +348,7 @@ async fn finish(
     core.update_task(&id, |task| task.status = "verifying".into())
         .await;
     let saved = if matches!(session.manifest.kind, ContentKind::Files) {
-        let destination = core
+        let destination = session
             .receive_dir
             .join(format!("接收-{}-{}", crate::now(), &id[..8]));
         tokio::fs::rename(&session.staging, &destination)

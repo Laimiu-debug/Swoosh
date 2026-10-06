@@ -20,6 +20,10 @@ function size(bytes: number) {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
+function displayPath(path: string) {
+  return path.replace(/^\\\\\?\\UNC\\/, '\\\\').replace(/^\\\\\?\\/, '');
+}
+
 function Icon({ name, className = '' }: { name: string; className?: string }) {
   const paths: Record<string, ReactNode> = {
     file: <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 13h8M8 17h5" /></>,
@@ -82,9 +86,12 @@ export default function App() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [connecting, setConnecting] = useState(false);
+  const [receiveSettings, setReceiveSettings] = useState(false);
+  const [savingDirectory, setSavingDirectory] = useState(false);
   const [address, setAddress] = useState('');
   const [theme, setTheme] = useState(() => localStorage.getItem('swoosh-theme') ?? 'system');
   const previousFocus = useRef<HTMLElement | null>(null);
+  const settingsFocus = useRef<HTMLElement | null>(null);
   const refresh = useCallback(async () => {
     if (!native) return;
     try { setSnapshot(await invoke<Snapshot>('snapshot')); } catch (error) { setError(String(error)); }
@@ -129,6 +136,15 @@ export default function App() {
   }
   function openConnection() { previousFocus.current = document.activeElement as HTMLElement; setConnecting(true); }
   function closeConnection() { setConnecting(false); previousFocus.current?.focus(); }
+  function openReceiveSettings() { settingsFocus.current = document.activeElement as HTMLElement; setError(''); setReceiveSettings(true); }
+  function closeReceiveSettings() { setReceiveSettings(false); settingsFocus.current?.focus(); }
+  async function changeReceiveDirectory(reset = false) {
+    setSavingDirectory(true);
+    try {
+      const result = await run(reset ? 'reset_receive_dir' : 'choose_receive_dir');
+      if (typeof result === 'string') setNotice(reset ? '已恢复默认接收位置' : '接收位置已保存');
+    } finally { setSavingDirectory(false); }
+  }
   const canSend = native && !busy && (tab === 'files' ? !!selection : !!text.trim() && new TextEncoder().encode(text).length <= 1024 * 1024);
   const peers = snapshot?.peers ?? [];
   const transfers = snapshot?.transfers ?? [];
@@ -142,7 +158,8 @@ export default function App() {
       <div className="greeting"><div><h1>把东西递给身边的设备。</h1><p>同一网络，打开 Swoosh 就能相遇。</p></div><span className="self-device"><span className={`online-dot ${native ? '' : 'offline'}`} /><Icon name="desktop" /><span>{snapshot?.device.name ?? (native ? '正在启动…' : '桌面界面预览')}</span></span></div>
       {!native && <p className="banner">这是界面预览。请运行 Swoosh 桌面应用，使用文件选择和局域网传输。</p>}
       {snapshot?.networkWarning && <p className="banner">{snapshot.networkWarning}</p>}
-      {error && !connecting && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" onClick={() => setError('')} aria-label="关闭错误提示"><Icon name="close" /></button></div>}
+      {snapshot?.receiveDirWarning && <div className="banner receive-warning"><span>{snapshot.receiveDirWarning}</span><button className="text-button" onClick={openReceiveSettings}>选择文件夹</button></div>}
+      {error && !connecting && !receiveSettings && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" onClick={() => setError('')} aria-label="关闭错误提示"><Icon name="close" /></button></div>}
       <div className="workspace">
         <section className="panel send-panel" aria-label="发送内容"><div className="tabs" role="tablist" aria-label="内容类型"><button role="tab" id="files-tab" aria-controls="files-panel" aria-selected={tab === 'files'} tabIndex={tab === 'files' ? 0 : -1} onClick={() => setTab('files')} onKeyDown={event => { if (event.key === 'ArrowRight') { setTab('text'); document.getElementById('text-tab')?.focus(); } }}><Icon name="file" />文件</button><button role="tab" id="text-tab" aria-controls="text-panel" aria-selected={tab === 'text'} tabIndex={tab === 'text' ? 0 : -1} onClick={() => setTab('text')} onKeyDown={event => { if (event.key === 'ArrowLeft') { setTab('files'); document.getElementById('files-tab')?.focus(); } }}><Icon name="text" />文字</button></div>
           {tab === 'files' ? <div role="tabpanel" id="files-panel" aria-labelledby="files-tab"><div className={`dropzone ${dragging ? 'dragging' : ''}`}><span className="file-art"><Icon name={selection ? 'check' : 'file'} /></span><h2>{busy ? '正在准备文件…' : selection ? '准备好了，发给谁？' : '文件、照片，都放这里。'}</h2><p>{selection ? `${selection.count} 个文件 · ${size(selection.totalBytes)}` : '拖进来，或从电脑里选一下'}</p><div className="actions"><button className="button primary" disabled={!native || busy} onClick={() => void choose(false)}>选择文件</button><button className="button" disabled={!native || busy} onClick={() => void choose(true)}>文件夹</button></div></div>
@@ -155,8 +172,9 @@ export default function App() {
       {!!transfers.length && <section className="transfers" aria-label="传输任务"><div className="section-heading"><h2>{incoming ? `有 ${incoming} 项内容等你接收` : '正在传递'}</h2><span className="muted">双方确认后开始</span></div>{[...transfers].reverse().map(task => <TransferCard key={task.id} task={task} run={run} />)}</section>}
       <section className="history"><div className="section-heading"><h2><Icon name="history" />最近传输</h2>{!!history.length && <button className="text-button" onClick={() => void run('clear_history')}>清空记录</button>}</div>{history.length ? history.slice(0, 5).map(item => <HistoryRow key={item.id} item={item} run={run} />) : <p className="empty-history">第一次传递，从一份小文件开始。</p>}</section>
     </main>
-    <footer><span><span className="online-dot" />本地连接 · 加密传输</span><button className="text-button" disabled={!native || !snapshot} onClick={() => void run('open_received', { path: snapshot?.receiveDir })}><Icon name="folder" />接收文件夹</button><span>0.1.0</span></footer>
+    <footer><span><span className="online-dot" />本地连接 · 加密传输</span><div className="receive-folder-actions"><button className="text-button" title={snapshot ? displayPath(snapshot.receiveDir) : undefined} disabled={!native || !snapshot} onClick={() => void run('open_received', { path: snapshot?.receiveDir })}><Icon name="folder" />接收文件夹</button><button className="text-button" disabled={!native || !snapshot} onClick={openReceiveSettings} aria-label="设置接收文件夹">更改</button></div><span>0.1.1</span></footer>
     {notice && <div className="toast" role="status"><Icon name="check" />{notice}</div>}
+    {receiveSettings && <Modal title="接收文件夹" onClose={closeReceiveSettings}><p className="muted">收到的文件，放在你喜欢的位置。</p><div className="receive-location"><span className="muted">当前保存位置</span><p title={snapshot?.receiveDir}>{displayPath(snapshot?.receiveDir ?? '')}</p><button className="text-button" disabled={savingDirectory} onClick={() => void run('open_received', { path: snapshot?.receiveDir })}><Icon name="folder" />打开文件夹</button></div><p className="receive-location-hint">修改后自动保存，下次打开仍会使用。当前接收继续保存到原位置，旧文件不会搬动。</p>{error && <p className="error-text" role="alert">{error}</p>}<div className="receive-location-buttons"><button className="button primary" disabled={savingDirectory} onClick={() => void changeReceiveDirectory()}>{savingDirectory ? '正在处理…' : '选择文件夹'}</button><button className="button" disabled={savingDirectory} onClick={() => void changeReceiveDirectory(true)}>恢复默认</button></div><p className="field-hint">默认位置：系统下载目录下的 Swoosh 文件夹。</p></Modal>}
     {connecting && <Modal title="连接设备" onClose={closeConnection}><p className="muted">两台电脑不用扫码，直接输入对方的地址。</p><div className="local-addresses"><label>这台电脑的地址</label>{snapshot?.addresses.length ? snapshot.addresses.map(value => <div className="address-row" key={value}><code>{value}</code><button className="text-button" onClick={() => void run('copy_text', { text: value })}>复制</button></div>) : <p className="muted">没有可用的局域网地址，请检查网络连接。</p>}</div><form onSubmit={event => { event.preventDefault(); setBusy(true); void run('connect_device', { address }).then(value => { if (value) { closeConnection(); setNotice('已连接，选好内容就能发送'); } }).finally(() => setBusy(false)); }}><label htmlFor="address">另一台设备的地址</label><input id="address" value={address} onChange={event => setAddress(event.target.value)} placeholder="192.168.1.8:53318" autoComplete="off" required /><p className="field-hint">在对方的「连接设备」里查看。</p>{error && <p className="error-text" role="alert">{error}</p>}<div className="actions dialog-actions"><button className="button" type="button" onClick={closeConnection}>关闭</button><button className="button primary" type="submit" disabled={busy || !address.trim()}>{busy ? '连接中…' : '连接'}</button></div></form></Modal>}
   </div>;
 }

@@ -41,7 +41,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-store.ps1 -S
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-store.ps1 -StoreIdentityPath .local/store-identity.json
 ```
 
-MSIX 版本独立于当前 Tauri 技术预览版本 0.1.0。微软要求商店版本的第一段非零、第四段为零，因此候选包从 1.0.0.0 开始；这不表示当前功能已经达到正式版验收。更新时需要递增适用包版本。
+MSIX 版本独立于当前 Tauri 技术预览版本 0.1.1。微软要求商店版本的第一段非零、第四段为零，因此开发候选包从 1.0.0.0 开始；这不表示当前功能已经达到正式版验收。当前尚未提交过商店版本，本次开发包已包含接收位置设置；正式发布后更新需要递增适用包版本。
 
 Microsoft Store 对通过审核的 MSIX 提供商店签名。当前脚本不会购买证书、保存证书私钥或生成商业签名。
 
@@ -60,7 +60,7 @@ Microsoft Store 对通过审核的 MSIX 提供商店签名。当前脚本不会�
 | 中断及持久化 | 自动化测试有部分覆盖，实机待补 | 网络断开、应用退出/重启、不完整内容清理、历史恢复 |
 | 商店截图 | 待实拍 | 至少一张真实 PNG，桌面最低 1366×768；计划四张 |
 
-本次 Computer Use 被用户通过 Esc 停止，没有继续桌面操作，未生成真实应用截图。截图不能用官网示意图替代。可在测试环境使用虚构设备名、自行创建的测试文件和文字实拍 `listing.zh-CN.md` 列出的四个场景。
+此前商店准备时的 Computer Use 由用户通过 Esc 停止；本次已验证接收位置设置的原生界面流程，尚未生成商店截图。截图不能用官网示意图替代。可在测试环境使用虚构设备名、自行创建的测试文件和文字实拍 `listing.zh-CN.md` 列出的四个场景。
 
 ## 最终提交设置
 
