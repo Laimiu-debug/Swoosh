@@ -1,0 +1,30 @@
+# 操作系统文件
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 编辑器本地配置与临时文件
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 本地环境变量（允许提交不包含凭据的示例）
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# 日志与临时文件
+*.log
+*.tmp
+*.temp
+
+# 应用依赖、编译产物与本地测试数据
+node_modules/
+dist/
+target/
+src-tauri/gen/
+.local/
+*.tsbuildinfo

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Only the local application window can use core window events. Native file and clipboard operations are bounded Rust commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Swoosh 简单轻快的设计令牌与界面预览，使用本地演示数据。">
+    <title>Swoosh 设计预览</title>
+    <link rel="stylesheet" href="tokens.css">
+    <link rel="stylesheet" href="preview.css">
+    <link rel="icon" type="image/svg+xml" href="brand/favicon.svg">
+    <script src="preview.js" defer></script>
+  </head>
+  <body>
+    <svg class="svg-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+      <!-- swoosh-brand:start -->
+      <symbol id="swoosh" viewBox="0 0 64 64">
+<g transform="translate(1 1)">
+<path d="M49 27L56 28C58 28.4 58 29.6 56 30.5L50 34Z" fill="currentColor"/>
+<path d="M9 37C15 35 22 31 26 27C26 22 23 16 20 12C19 10 20 9 22 10C32 14 39 20 39 25C42 20 49 21 51 27C55 36 48 45 36 47C24 49 15 45 9 39C8 38 8 37 9 37Z M44.2 28a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0Z" fill="currentColor" fill-rule="evenodd"/>
+</g>
+      </symbol>
+      <!-- swoosh-brand:end -->
+      <symbol id="file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></symbol>
+      <symbol id="phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 5h4M11 18h2"/></symbol>
+      <symbol id="desktop" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+      <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+      <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+      <symbol id="folder" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></symbol>
+    </svg>
+    <header class="page-header">
+      <a class="brand" href="#main" aria-label="Swoosh 设计预览">
+        <span class="brand-mark"><svg class="brand-symbol" aria-hidden="true"><use href="#swoosh"/></svg></span>
+        <span>Swoosh<span class="brand-caption">设计预览</span></span>
+      </a>
+      <div class="theme-switch" role="group" aria-label="预览主题">
+        <button type="button" data-set-theme="light" aria-pressed="true">浅色</button>
+        <button type="button" data-set-theme="dark" aria-pressed="false">深色</button>
+      </div>
+    </header>
+    <main id="main" class="page-main">
+      <div class="intro">
+        <div><p class="eyebrow">DESIGN FOUNDATIONS / 0.1</p><h1>简单一点，轻快一点。</h1><p class="intro-copy">柔和底色、清楚的操作，把注意力留给你想传的东西。</p></div>
+        <span class="intro-note">本地演示 · 无网络传输</span>
+      </div>
+      <div class="preview-grid">
+        <section class="app-frame" aria-label="发送首页预览">
+          <div class="app-header"><div class="current-device"><span class="online-dot"></span>这台电脑<span class="muted">Windows</span></div><button class="button secondary" type="button" id="connect-button">连接我的设备</button></div>
+          <div class="app-body">
+            <div class="welcome"><h2>选一下，嗖过去。</h2><p>文件、照片或一段文字，都能轻松送到。</p></div>
+            <div class="content-tabs" role="tablist" aria-label="发送内容类型">
+              <button type="button" id="file-tab" role="tab" aria-selected="true" aria-controls="file-panel" tabindex="0">文件</button>
+              <button type="button" id="text-tab" role="tab" aria-selected="false" aria-controls="text-panel" tabindex="-1">文字</button>
+            </div>
+            <section id="file-panel" role="tabpanel" aria-labelledby="file-tab">
+              <div class="dropzone" id="dropzone"><span class="file-art"><svg class="icon" aria-hidden="true"><use href="#folder"/></svg></span><h3>把文件拖到这里</h3><p>图片、文件夹，也可以一起发送。</p><div class="file-actions"><button class="button primary" type="button" id="choose-file">选择文件</button><button class="button secondary" type="button" id="choose-folder">选择文件夹</button></div></div>
+              <input id="file-input" type="file" multiple hidden>
+              <input id="folder-input" type="file" webkitdirectory multiple hidden>
+              <div class="selected-file" id="selected-file"><span class="small-icon"><svg class="icon" aria-hidden="true"><use href="#file"/></svg></span><div class="file-description"><strong id="selection-name">旅行照片.zip</strong><span id="selection-details">128 MB · 已选 1 个文件</span></div><button class="icon-button" type="button" id="clear-selection" aria-label="移除已选内容"><svg class="icon" aria-hidden="true"><use href="#close"/></svg></button></div>
+            </section>
+            <section id="text-panel" role="tabpanel" aria-labelledby="text-tab" hidden><label class="field-label" for="text-content">想发些什么</label><textarea id="text-content" rows="5" placeholder="贴一段文字，发到另一台设备。">周末出去走走？照片已经整理好啦。</textarea><p class="field-hint">接收后点一下复制，默认不改写对方剪贴板。</p></section>
+            <section class="devices" aria-labelledby="devices-title"><div class="section-heading"><h3 id="devices-title">发给谁</h3><span class="muted">2 台设备</span></div><div class="device-grid">
+              <button class="device-card" type="button" data-device="我的手机"><span class="device-icon"><svg class="icon" aria-hidden="true"><use href="#phone"/></svg></span><span class="device-info"><strong>我的手机</strong><span>Android · 已配对</span></span><svg class="icon device-arrow" aria-hidden="true"><use href="#arrow"/></svg></button>
+              <button class="device-card" type="button" data-device="书房电脑"><span class="device-icon neutral-icon"><svg class="icon" aria-hidden="true"><use href="#desktop"/></svg></span><span class="device-info"><strong>书房电脑</strong><span>Windows · 需要确认</span></span><svg class="icon device-arrow" aria-hidden="true"><use href="#arrow"/></svg></button>
+            </div></section>
+            <div id="transfer-message" class="transfer-message" role="status" aria-live="polite">已选好内容，点击设备就能发送。</div>
+            <div id="transfer-progress" class="transfer-progress" hidden><div class="section-heading"><strong id="transfer-label">正在发送</strong><button class="text-button" type="button" id="cancel-transfer">取消</button></div><progress id="progress-bar" max="100" value="0" aria-label="发送进度"></progress><span id="progress-label" class="muted">0%</span></div>
+            <section class="recent" aria-labelledby="recent-title"><div class="section-heading"><h3 id="recent-title">最近传输</h3><span class="muted">只保存在本机</span></div><div class="history-item"><span class="status-icon"><svg class="icon" aria-hidden="true"><use href="#check"/></svg></span><div class="history-info"><strong id="history-name">周末清单.txt</strong><span id="history-details">来自我的手机 · 今天 10:24</span></div><span class="status-badge" id="history-status">已收到</span></div></section>
+          </div>
+          <div class="app-footer"><span>同一局域网，即可互相发送</span><span>演示数据</span></div>
+        </section>
+        <aside class="foundations" aria-label="设计令牌示例">
+          <section class="foundation-card"><div class="section-heading"><h2>01 <span>配色</span></h2><span class="muted">温柔，但清楚</span></div><div class="swatch-grid">
+            <div class="swatch-item"><span class="swatch" style="background:var(--sw-color-primary)"></span><strong>薄荷绿</strong><code data-color="primary">#087F6B</code></div>
+            <div class="swatch-item"><span class="swatch" style="background:var(--sw-color-background)"></span><strong>轻背景</strong><code data-color="background">#F7FAF9</code></div>
+            <div class="swatch-item"><span class="swatch" style="background:var(--sw-color-text-primary)"></span><strong>正文色</strong><code data-color="text-primary">#142820</code></div>
+            <div class="swatch-item"><span class="swatch" style="background:var(--sw-color-accent)"></span><strong>杏色点缀</strong><code data-color="accent">#FFE9D7</code></div>
+          </div><div class="status-examples"><span class="status-chip success">已完成</span><span class="status-chip warning">等待确认</span><span class="status-chip danger">发送失败</span></div></section>
+          <section class="foundation-card"><div class="section-heading"><h2>02 <span>文字</span></h2><span class="muted">系统字体</span></div><p class="type-title">发送一点好心情</p><p class="type-body">让常用的东西，轻松到另一端。</p><p class="type-label">16 px 正文 / 24 px 标题</p><div class="divider"></div><p class="muted type-note">关键操作清楚可读，辅助信息安静一点。</p></section>
+          <section class="foundation-card"><div class="section-heading"><h2>03 <span>形状与留白</span></h2><span class="muted">4 px 网格</span></div><div class="radius-examples"><div><span style="border-radius:var(--sw-radius-small)"></span><small>8</small></div><div><span style="border-radius:var(--sw-radius-control)"></span><small>12</small></div><div><span style="border-radius:var(--sw-radius-card)"></span><small>16</small></div><div><span style="border-radius:var(--sw-radius-panel)"></span><small>20</small></div></div><div class="spacing-examples"><span style="--sample-space:var(--sw-space-2)">8</span><span style="--sample-space:var(--sw-space-4)">16</span><span style="--sample-space:var(--sw-space-6)">24</span><span style="--sample-space:var(--sw-space-8)">32</span></div><p class="type-note muted">44 px 点击目标，细描边，少量阴影。</p></section>
+          <section class="motion-card"><span class="motion-plane"><svg class="brand-symbol" aria-hidden="true"><use href="#swoosh"/></svg></span><div><h2>轻轻一动，就够了。</h2><p>120–360 ms · 尊重减少动态效果</p></div></section>
+        </aside>
+      </div>
+      <footer class="page-footer"><span>设计令牌 0.1 · 2026.10.06</span><a href="brand/preview.html">查看新图标与资源</a></footer>
+    </main>
+    <dialog id="connect-dialog" aria-labelledby="connect-title"><div class="dialog-header"><h2 id="connect-title">连接我的设备</h2><button class="icon-button" type="button" data-close-dialog="connect-dialog" aria-label="关闭连接面板"><svg class="icon" aria-hidden="true"><use href="#close"/></svg></button></div><p class="muted">两台电脑可以直接输入地址连接。连接后，再核对双方的配对码。</p><label class="field-label" for="example-address">示例局域网地址</label><input id="example-address" value="192.168.1.8:53318" readonly><p class="field-hint" id="address-hint">此地址仅用于设计演示，不会发起网络连接。</p><div class="dialog-actions"><button class="button secondary" type="button" id="select-address">选中地址</button><button class="button primary" type="button" data-close-dialog="connect-dialog">完成</button></div></dialog>
+    <dialog id="pair-dialog" aria-labelledby="pair-title"><div class="dialog-header"><h2 id="pair-title">核对配对码</h2><button class="icon-button" type="button" data-close-dialog="pair-dialog" aria-label="关闭配对预览"><svg class="icon" aria-hidden="true"><use href="#close"/></svg></button></div><p class="muted">确认另一台设备也显示这组数字，再继续发送。</p><div class="pair-code" aria-label="配对码 482915">482 915</div><label class="checkbox-label"><input id="remember-device" type="checkbox">记住这台设备</label><label class="checkbox-label"><input id="auto-receive" type="checkbox" disabled>自动接收这台设备的内容</label><p class="field-hint">演示配对只保留在当前预览中。</p><div class="dialog-actions"><button class="button secondary" type="button" data-close-dialog="pair-dialog">取消</button><button class="button primary" type="button" id="confirm-pair">一致，继续</button></div></dialog>
+  </body>
+</html>
