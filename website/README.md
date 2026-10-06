@@ -1,6 +1,6 @@
 # Swoosh 官网
 
-[公开官网](https://swoosh-laimiu.laimiu-new.chatgpt.site) · [Windows 预览版](https://github.com/Laimiu-debug/Swoosh/releases/tag/v0.1.0-preview.1)
+[公开官网](https://swoosh-laimiu.laimiu-new.chatgpt.site) · [Windows 预览版](https://github.com/Laimiu-debug/Swoosh/releases/tag/v0.1.1-preview.2)
 
 官网沿用「小信使」品牌，提供功能介绍、文件与文字用途切换、三步使用说明、下载入口和常见问题。当前下载明确标记为 Windows 技术预览版，规划中的功能不作为已交付能力展示。
 

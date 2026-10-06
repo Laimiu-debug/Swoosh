@@ -2,7 +2,7 @@
 
 Swoosh 是面向个人用户的本地局域网传输软件。文件、文件夹、照片和文字，选一下，嗖过去。
 
-[访问官网](https://swoosh-laimiu.laimiu-new.chatgpt.site) · [下载 Windows 预览版](https://github.com/Laimiu-debug/Swoosh/releases/tag/v0.1.1-preview.1) · [查看开发进度](docs/implementation-status.md)
+[访问官网](https://swoosh-laimiu.laimiu-new.chatgpt.site) · [下载 Windows 预览版](https://github.com/Laimiu-debug/Swoosh/releases/tag/v0.1.1-preview.2) · [查看开发进度](docs/implementation-status.md)
 
 应用使用 **Tauri 2 + Rust + React + TypeScript + Vite**，运行在独立桌面窗口中。发布版内嵌界面资源，无需启动浏览器或连接互联网。
 
